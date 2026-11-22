@@ -1,0 +1,29 @@
+# Compiled Maven artifacts and dependencies
+target/
+*.class
+
+# Secret database credentials and properties
+src/main/resources/db.properties
+db.properties
+*.env
+*.key
+*.pem
+*.log
+
+# Eclipse / IDE metadata
+.classpath
+.project
+.settings/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+
+# VS Code
+.vscode/
+
+# OS-generated files
+Thumbs.db
+Desktop.ini
+.DS_Store
