@@ -1,3 +1,5 @@
-db.url=jdbc:mysql://localhost:3306/ecommerce_db
+# Database Configuration Template
+# Copy this file to db.properties and set your local MySQL credentials
+db.url=jdbc:mysql://localhost:3306/ecommerce_db?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC
 db.user=root
-db.password=varshith@2005
+db.password=YOUR_LOCAL_PASSWORD_HERE
