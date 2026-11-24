@@ -103,7 +103,16 @@ ON DUPLICATE KEY UPDATE
     price = VALUES(price),
     stock_qty = VALUES(stock_qty);
 
--- 5. VERIFY DATABASE
+-- 5. USERS TABLE (for authentication)
+CREATE TABLE IF NOT EXISTS users (
+    user_id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(100) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role ENUM('ADMIN', 'CUSTOMER') NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 6. VERIFY DATABASE
 SELECT * FROM categories;
 
 SELECT
@@ -117,3 +126,5 @@ SELECT
 FROM products p
 JOIN categories c ON p.category_id = c.id
 ORDER BY p.id;
+
+SELECT user_id, username, role FROM users;

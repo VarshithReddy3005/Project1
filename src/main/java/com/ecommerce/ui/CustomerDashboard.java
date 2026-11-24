@@ -22,6 +22,7 @@ import java.awt.event.MouseMotionAdapter;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Point2D;
 import java.awt.geom.RoundRectangle2D;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -37,12 +38,14 @@ import javax.swing.JTextField;
 import javax.swing.Timer;
 import javax.swing.border.EmptyBorder;
 
+import com.ecommerce.model.Product;
 import com.ecommerce.model.User;
+import com.ecommerce.service.CatalogService;
 
 /**
  * NEXUS LUXE • Luxury Customer Shopping Experience
  * Features:
- * - Curated luxury catalog with live category filtering
+ * - Curated luxury catalog with live category filtering from database
  * - Interactive shopping cart & live cart item counter
  * - Customer wishlist & quick add
  * - My Orders tracking & order history modal
@@ -52,10 +55,12 @@ import com.ecommerce.model.User;
 public class CustomerDashboard extends JFrame {
 
     private final User user;
-    private final List<ProductItem> allProducts = new ArrayList<>();
-    private final List<ProductItem> filteredProducts = new ArrayList<>();
-    private final List<ProductItem> cartItems = new ArrayList<>();
-    private final List<ProductItem> wishlistItems = new ArrayList<>();
+    private final CatalogService catalogService;
+
+    private final List<Product> allProducts = new ArrayList<>();
+    private final List<Product> filteredProducts = new ArrayList<>();
+    private final List<Product> cartItems = new ArrayList<>();
+    private final List<Product> wishlistItems = new ArrayList<>();
 
     private JLabel cartBadgeLabel;
     private JPanel productGridPanel;
@@ -85,6 +90,7 @@ public class CustomerDashboard extends JFrame {
 
     public CustomerDashboard(User user) {
         this.user = user;
+        this.catalogService = new CatalogService();
 
         setTitle("NEXUS LUXE • Luxury Customer Portal (" + user.getUsername() + ")");
         setSize(1160, 780);
@@ -92,7 +98,7 @@ public class CustomerDashboard extends JFrame {
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
 
-        initCatalog();
+        loadCatalogFromDatabase();
         initParticles(45);
 
         MainCanvas canvas = new MainCanvas();
@@ -127,16 +133,10 @@ public class CustomerDashboard extends JFrame {
         animationTimer.start();
     }
 
-    private void initCatalog() {
-        allProducts.add(new ProductItem("Aura Chronometer Royal", "TIMEPIECES", 12500, "Swiss Automatic Calibre 4130, 18k White Gold, Sapphire Crystal."));
-        allProducts.add(new ProductItem("Midnight Silk Velvet Trench", "APPAREL", 3200, "Hand-tailored Milanese velvet coat with silk lining and gold hardware."));
-        allProducts.add(new ProductItem("Solstice Pavé Diamond Ring", "JEWELRY", 8950, "3.5 Carat VVS1 ethically sourced emerald-cut solitaire diamond."));
-        allProducts.add(new ProductItem("Obsidian Precision Smart Ring", "TECH", 12500, "Aerospace Grade 5 Titanium casing with biometric sleep and vitality sensor."));
-        allProducts.add(new ProductItem("Nocturne Atelier Cashmere Scarf", "APPAREL", 750, "100% Mongolian combed baby cashmere with fringed edge."));
-        allProducts.add(new ProductItem("Vanguard Tourbillon Chrono", "TIMEPIECES", 18400, "Flying tourbillon with 72-hour power reserve and carbon fiber bezel."));
-
-        // Default item in cart for realistic preview
-        cartItems.add(allProducts.get(0));
+    private void loadCatalogFromDatabase() {
+        // Load all products from database
+        allProducts.clear();
+        allProducts.addAll(catalogService.getCatalog("", "ALL"));
         filteredProducts.addAll(allProducts);
     }
 
@@ -321,8 +321,14 @@ public class CustomerDashboard extends JFrame {
         JPanel bar = new JPanel();
         bar.setOpaque(false);
 
-        String[] categories = {"ALL", "TIMEPIECES", "APPAREL", "JEWELRY", "TECH"};
-        for (String cat : categories) {
+        // Load categories from database
+        List<String> categoryNames = new ArrayList<>();
+        categoryNames.add("ALL");
+        for (com.ecommerce.model.Category c : catalogService.getCategories()) {
+            categoryNames.add(c.getName());
+        }
+
+        for (String cat : categoryNames) {
             JButton catBtn = new JButton(cat);
             catBtn.setFont(new Font("Segoe UI", Font.BOLD, 11));
             catBtn.setForeground(cat.equals(selectedCategory) ? TEXT_WHITE : TEXT_MUTED);
@@ -392,24 +398,18 @@ public class CustomerDashboard extends JFrame {
     }
 
     private void filterCatalog(String query) {
+        String searchText = (query != null && !query.equals("Search luxury collection...")) ? query.trim() : "";
+        String category = selectedCategory.equals("ALL") ? null : selectedCategory;
+
         filteredProducts.clear();
-        String q = (query != null && !query.equals("Search luxury collection...")) ? query.trim().toLowerCase() : "";
-
-        for (ProductItem p : allProducts) {
-            boolean matchesCat = selectedCategory.equals("ALL") || p.category.equalsIgnoreCase(selectedCategory);
-            boolean matchesSearch = q.isEmpty() || p.name.toLowerCase().contains(q) || p.description.toLowerCase().contains(q);
-
-            if (matchesCat && matchesSearch) {
-                filteredProducts.add(p);
-            }
-        }
+        filteredProducts.addAll(catalogService.getCatalog(searchText, category));
         renderProductCards();
     }
 
     private void renderProductCards() {
         productGridPanel.removeAll();
 
-        for (ProductItem item : filteredProducts) {
+        for (Product item : filteredProducts) {
             JPanel card = new JPanel() {
                 @Override
                 protected void paintComponent(Graphics g) {
@@ -432,30 +432,40 @@ public class CustomerDashboard extends JFrame {
             card.setPreferredSize(new Dimension(320, 200));
 
             // Category tag
-            JLabel catTag = new JLabel("● " + item.category);
+            JLabel catTag = new JLabel("● " + item.getCategoryName());
             catTag.setFont(new Font("Segoe UI", Font.BOLD, 10));
             catTag.setForeground(ACCENT_CYAN);
             catTag.setBounds(20, 16, 200, 16);
             card.add(catTag);
 
             // Title
-            JLabel nameLabel = new JLabel(item.name);
+            JLabel nameLabel = new JLabel(item.getName());
             nameLabel.setFont(new Font("Segoe UI", Font.BOLD, 15));
             nameLabel.setForeground(TEXT_WHITE);
             nameLabel.setBounds(20, 36, 280, 24);
             card.add(nameLabel);
 
             // Description
-            JLabel descLabel = new JLabel("<html><body style='width: 240px; color: #94A3B8; font-size: 10px; font-family: Segoe UI;'>" + item.description + "</body></html>");
+            JLabel descLabel = new JLabel("<html><body style='width: 240px; color: #94A3B8; font-size: 10px; font-family: Segoe UI;'>" + item.getDescription() + "</body></html>");
             descLabel.setBounds(20, 62, 280, 42);
             card.add(descLabel);
 
             // Price
-            JLabel priceLabel = new JLabel("$" + String.format("%,d", item.price) + " USD");
+            String priceStr = "$" + String.format("%,.2f", item.getPrice()) + " USD";
+            JLabel priceLabel = new JLabel(priceStr);
             priceLabel.setFont(new Font("Segoe UI", Font.BOLD, 15));
             priceLabel.setForeground(new Color(52, 211, 153));
-            priceLabel.setBounds(20, 138, 140, 24);
+            priceLabel.setBounds(20, 138, 160, 24);
             card.add(priceLabel);
+
+            // Stock indicator
+            String stockText = item.getStockQty() > 0 ? "In Stock: " + item.getStockQty() : "⚠️ OUT OF STOCK";
+            Color stockColor = item.getStockQty() > 0 ? new Color(52, 211, 153) : new Color(244, 63, 94);
+            JLabel stockLabel = new JLabel(stockText);
+            stockLabel.setFont(new Font("Segoe UI", Font.PLAIN, 10));
+            stockLabel.setForeground(stockColor);
+            stockLabel.setBounds(20, 114, 200, 16);
+            card.add(stockLabel);
 
             // Wishlist Toggle
             JButton wishBtn = new JButton("♡");
@@ -468,10 +478,10 @@ public class CustomerDashboard extends JFrame {
             wishBtn.addActionListener(e -> {
                 if (!wishlistItems.contains(item)) {
                     wishlistItems.add(item);
-                    JOptionPane.showMessageDialog(this, "Added to Wishlist:\n" + item.name, "Wishlist", JOptionPane.INFORMATION_MESSAGE);
+                    JOptionPane.showMessageDialog(this, "Added to Wishlist:\n" + item.getName(), "Wishlist", JOptionPane.INFORMATION_MESSAGE);
                 } else {
                     wishlistItems.remove(item);
-                    JOptionPane.showMessageDialog(this, "Removed from Wishlist:\n" + item.name, "Wishlist", JOptionPane.INFORMATION_MESSAGE);
+                    JOptionPane.showMessageDialog(this, "Removed from Wishlist:\n" + item.getName(), "Wishlist", JOptionPane.INFORMATION_MESSAGE);
                 }
             });
             card.add(wishBtn);
@@ -485,10 +495,16 @@ public class CustomerDashboard extends JFrame {
             addBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
             addBtn.setBounds(210, 134, 96, 32);
 
+            // Disable if out of stock
+            if (item.getStockQty() <= 0) {
+                addBtn.setEnabled(false);
+                addBtn.setBackground(new Color(100, 116, 139));
+            }
+
             addBtn.addActionListener(e -> {
                 cartItems.add(item);
                 cartBadgeLabel.setText("🛒 Bag (" + cartItems.size() + ")");
-                JOptionPane.showMessageDialog(this, "Item added to your shopping bag:\n" + item.name + " ($" + item.price + ")", "Shopping Bag", JOptionPane.INFORMATION_MESSAGE);
+                JOptionPane.showMessageDialog(this, "Item added to your shopping bag:\n" + item.getName() + " ($" + String.format("%,.2f", item.getPrice()) + ")", "Shopping Bag", JOptionPane.INFORMATION_MESSAGE);
             });
             card.add(addBtn);
 
@@ -500,21 +516,21 @@ public class CustomerDashboard extends JFrame {
     }
 
     private void showCartDialog() {
-        int subtotal = 0;
+        BigDecimal subtotal = BigDecimal.ZERO;
         StringBuilder sb = new StringBuilder();
         sb.append("Your Shopping Bag:\n\n");
         if (cartItems.isEmpty()) {
             sb.append("Your bag is currently empty.\nBrowse the catalog to add luxury pieces.");
         } else {
             for (int i = 0; i < cartItems.size(); i++) {
-                ProductItem p = cartItems.get(i);
-                sb.append(i + 1).append(". ").append(p.name).append(" — $").append(String.format("%,d", p.price)).append("\n");
-                subtotal += p.price;
+                Product p = cartItems.get(i);
+                sb.append(i + 1).append(". ").append(p.getName()).append(" — $").append(String.format("%,.2f", p.getPrice())).append("\n");
+                subtotal = subtotal.add(p.getPrice());
             }
             sb.append("\n-------------------------------------\n");
-            sb.append("Estimated Subtotal: $").append(String.format("%,d", subtotal)).append(" USD\n");
+            sb.append("Estimated Subtotal: $").append(String.format("%,.2f", subtotal)).append(" USD\n");
             sb.append("White Glove Shipping: COMPLIMENTARY\n");
-            sb.append("Total: $").append(String.format("%,d", subtotal)).append(" USD\n\n");
+            sb.append("Total: $").append(String.format("%,.2f", subtotal)).append(" USD\n\n");
             sb.append("Proceed to secure checkout?");
         }
 
@@ -532,8 +548,8 @@ public class CustomerDashboard extends JFrame {
         if (wishlistItems.isEmpty()) {
             sb.append("No saved items. Click '♡' on any piece to save it for later.");
         } else {
-            for (ProductItem p : wishlistItems) {
-                sb.append("• ").append(p.name).append(" ($").append(p.price).append(")\n");
+            for (Product p : wishlistItems) {
+                sb.append("• ").append(p.getName()).append(" ($").append(String.format("%,.2f", p.getPrice())).append(")\n");
             }
         }
         JOptionPane.showMessageDialog(this, sb.toString(), "My Wishlist", JOptionPane.INFORMATION_MESSAGE);
@@ -628,20 +644,6 @@ public class CustomerDashboard extends JFrame {
             RadialGradientPaint p = new RadialGradientPaint(new Point2D.Float(cx, cy), rad, dist, colors);
             g2.setPaint(p);
             g2.fill(new Ellipse2D.Float(cx - rad, cy - rad, rad * 2, rad * 2));
-        }
-    }
-
-    private static class ProductItem {
-        final String name;
-        final String category;
-        final int price;
-        final String description;
-
-        ProductItem(String name, String category, int price, String description) {
-            this.name = name;
-            this.category = category;
-            this.price = price;
-            this.description = description;
         }
     }
 

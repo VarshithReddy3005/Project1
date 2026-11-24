@@ -21,25 +21,31 @@ import java.awt.event.MouseMotionAdapter;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Point2D;
 import java.awt.geom.RoundRectangle2D;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
+import javax.swing.JTextField;
 import javax.swing.Timer;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 
+import com.ecommerce.model.Category;
+import com.ecommerce.model.Product;
 import com.ecommerce.model.User;
 import com.ecommerce.service.AuthService;
+import com.ecommerce.service.CatalogService;
 
 /**
  * NEXUS LUXE • Professional Admin Dashboard
@@ -47,8 +53,8 @@ import com.ecommerce.service.AuthService;
  * Includes:
  * - Live real customer count from MySQL users table
  * - Total Products, Total Orders, Total Sales
- * - Product Management & Inventory Table
- * - Category Management
+ * - Product Management & Inventory Table (database-driven)
+ * - Category Management (database-driven)
  * - Low Stock Alerts
  * - Customer & Role Management
  * - Order Review & Invoicing
@@ -57,10 +63,12 @@ public class AdminDashboard extends JFrame {
 
     private final User adminUser;
     private final AuthService authService;
+    private final CatalogService catalogService;
 
     // Real-time Database Counts
     private int realCustomerCount = 0;
     private int realTotalUsers = 0;
+    private int realProductCount = 0;
 
     // Ambient Animation Engine
     private Timer animationTimer;
@@ -73,6 +81,10 @@ public class AdminDashboard extends JFrame {
 
     private final List<Particle> particles = new ArrayList<>();
     private final Random rand = new Random(777);
+
+    // UI Components that need updates
+    private JTable inventoryTable;
+    private DefaultTableModel inventoryTableModel;
 
     // Color Palette
     private static final Color BG_DARK_TOP = new Color(8, 10, 24);
@@ -88,6 +100,7 @@ public class AdminDashboard extends JFrame {
     public AdminDashboard(User adminUser) {
         this.adminUser = adminUser;
         this.authService = new AuthService();
+        this.catalogService = new CatalogService();
 
         // Fetch real database metrics
         loadRealDatabaseMetrics();
@@ -136,9 +149,11 @@ public class AdminDashboard extends JFrame {
         try {
             this.realCustomerCount = authService.getCustomerCount();
             this.realTotalUsers = authService.getTotalUsersCount();
+            this.realProductCount = catalogService.getCatalog("", "ALL").size();
         } catch (Exception e) {
             this.realCustomerCount = 0;
             this.realTotalUsers = 0;
+            this.realProductCount = 0;
         }
     }
 
@@ -244,8 +259,9 @@ public class AdminDashboard extends JFrame {
         JButton refreshBtn = createActionButton("🔄 Sync DB", ACCENT_CYAN);
         refreshBtn.addActionListener(e -> {
             loadRealDatabaseMetrics();
+            refreshInventoryTable();
             JOptionPane.showMessageDialog(this,
-                "Database Synchronized!\nActive Customers in MySQL: " + realCustomerCount + "\nTotal User Records: " + realTotalUsers,
+                "Database Synchronized!\nActive Customers in MySQL: " + realCustomerCount + "\nTotal User Records: " + realTotalUsers + "\nTotal Products: " + realProductCount,
                 "Database Sync Complete", JOptionPane.INFORMATION_MESSAGE);
         });
         rightActions.add(refreshBtn);
@@ -268,8 +284,8 @@ public class AdminDashboard extends JFrame {
         grid.setOpaque(false);
         grid.setPreferredSize(new Dimension(1000, 105));
 
-        // Metric 1: Total Products
-        grid.add(createMetricCard("TOTAL PRODUCTS", "6 Active", "4 Luxury Categories", ACCENT_CYAN));
+        // Metric 1: Total Products (LIVE from DB)
+        grid.add(createMetricCard("TOTAL PRODUCTS", realProductCount + " Active", "4 Luxury Categories", ACCENT_CYAN));
 
         // Metric 2: Total Customers (REAL MySQL Data)
         grid.add(createMetricCard("TOTAL CUSTOMERS", realCustomerCount + " Registered", "MySQL `users` table", ACCENT_EMERALD));
@@ -381,62 +397,268 @@ public class AdminDashboard extends JFrame {
         subHeader.add(actions, BorderLayout.EAST);
         panel.add(subHeader, BorderLayout.NORTH);
 
-        // Live Inventory Table
-        String[] columns = {"SKU", "Product Name", "Category", "Price (USD)", "Stock Qty", "Status"};
-        Object[][] data = {
-            {"NX-101", "Aura Chronometer Royal", "TIMEPIECES", "$12,500", "3", "⚠️ LOW STOCK"},
-            {"NX-102", "Midnight Silk Velvet Trench", "APPAREL", "$3,200", "8", "IN STOCK"},
-            {"NX-103", "Solstice Pavé Diamond Ring", "JEWELRY", "$8,950", "2", "⚠️ LOW STOCK"},
-            {"NX-104", "Obsidian Precision Smart Ring", "TECH", "$12,500", "15", "IN STOCK"},
-            {"NX-105", "Nocturne Atelier Cashmere Scarf", "APPAREL", "$750", "24", "IN STOCK"},
-            {"NX-106", "Vanguard Tourbillon Chrono", "TIMEPIECES", "$18,400", "1", "⚠️ CRITICAL"}
-        };
-
-        DefaultTableModel model = new DefaultTableModel(data, columns) {
+        // Live Inventory Table (loaded from database)
+        String[] columns = {"ID", "SKU", "Product Name", "Category", "Price (USD)", "Stock Qty", "Low Stock Threshold", "Status"};
+        inventoryTableModel = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int row, int col) { return false; }
         };
 
-        JTable table = new JTable(model);
-        table.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-        table.setRowHeight(32);
-        table.setForeground(TEXT_WHITE);
-        table.setBackground(new Color(24, 28, 62));
-        table.setSelectionBackground(new Color(99, 102, 241, 140));
-        table.setSelectionForeground(TEXT_WHITE);
-        table.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 12));
-        table.getTableHeader().setBackground(new Color(15, 18, 42));
-        table.getTableHeader().setForeground(ACCENT_CYAN);
+        inventoryTable = new JTable(inventoryTableModel);
+        inventoryTable.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        inventoryTable.setRowHeight(32);
+        inventoryTable.setForeground(TEXT_WHITE);
+        inventoryTable.setBackground(new Color(24, 28, 62));
+        inventoryTable.setSelectionBackground(new Color(99, 102, 241, 140));
+        inventoryTable.setSelectionForeground(TEXT_WHITE);
+        inventoryTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 12));
+        inventoryTable.getTableHeader().setBackground(new Color(15, 18, 42));
+        inventoryTable.getTableHeader().setForeground(ACCENT_CYAN);
 
         // Center render status column
         DefaultTableCellRenderer centerRenderer = new DefaultTableCellRenderer();
         centerRenderer.setHorizontalAlignment(JLabel.CENTER);
-        table.getColumnModel().getColumn(5).setCellRenderer(centerRenderer);
+        inventoryTable.getColumnModel().getColumn(7).setCellRenderer(centerRenderer);
 
-        JScrollPane tableScroll = new JScrollPane(table);
+        // Hide ID column
+        inventoryTable.getColumnModel().getColumn(0).setMinWidth(0);
+        inventoryTable.getColumnModel().getColumn(0).setMaxWidth(0);
+        inventoryTable.getColumnModel().getColumn(0).setWidth(0);
+
+        JScrollPane tableScroll = new JScrollPane(inventoryTable);
         tableScroll.setOpaque(false);
         tableScroll.getViewport().setOpaque(false);
         tableScroll.setBorder(BorderFactory.createLineBorder(new Color(255, 255, 255, 20), 1));
 
         panel.add(tableScroll, BorderLayout.CENTER);
+
+        // Load initial data
+        refreshInventoryTable();
+
         return panel;
     }
 
+    private void refreshInventoryTable() {
+        if (inventoryTableModel == null) return;
+
+        inventoryTableModel.setRowCount(0);
+        List<Product> products = catalogService.getCatalog("", "ALL");
+
+        for (Product p : products) {
+            String status;
+            Color statusColor = TEXT_WHITE;
+
+            if (p.getStockQty() <= 0) {
+                status = "⚠️ OUT OF STOCK";
+            } else if (p.getStockQty() <= p.getLowStockThreshold()) {
+                status = "⚠️ LOW STOCK";
+            } else {
+                status = "✓ IN STOCK";
+            }
+
+            inventoryTableModel.addRow(new Object[]{
+                p.getId(),
+                p.getSku(),
+                p.getName(),
+                p.getCategoryName(),
+                "$" + String.format("%,.2f", p.getPrice()),
+                p.getStockQty(),
+                p.getLowStockThreshold(),
+                status
+            });
+        }
+
+        // Update metrics
+        realProductCount = products.size();
+    }
+
     private void showAddProductModal() {
-        String name = JOptionPane.showInputDialog(this, "Enter New Luxury Product Name:", "Product Management", JOptionPane.QUESTION_MESSAGE);
-        if (name != null && !name.trim().isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Product '" + name.trim() + "' registered into catalog draft.", "Catalog Updated", JOptionPane.INFORMATION_MESSAGE);
+        // Get categories for dropdown
+        List<Category> categories = catalogService.getCategories();
+        if (categories.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "No categories available. Please add categories first.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        JPanel panel = new JPanel(new GridLayout(0, 2, 8, 8));
+        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+
+        JTextField skuField = new JTextField();
+        JTextField nameField = new JTextField();
+        JTextField descField = new JTextField();
+        JComboBox<String> categoryCombo = new JComboBox<>();
+        for (Category c : categories) {
+            categoryCombo.addItem(c.getName() + " (ID: " + c.getId() + ")");
+        }
+        JTextField priceField = new JTextField();
+        JTextField stockField = new JTextField("0");
+        JTextField thresholdField = new JTextField("5");
+
+        panel.add(new JLabel("SKU*:"));
+        panel.add(skuField);
+        panel.add(new JLabel("Name*:"));
+        panel.add(nameField);
+        panel.add(new JLabel("Description:"));
+        panel.add(descField);
+        panel.add(new JLabel("Category*:"));
+        panel.add(categoryCombo);
+        panel.add(new JLabel("Price*:"));
+        panel.add(priceField);
+        panel.add(new JLabel("Stock Qty:"));
+        panel.add(stockField);
+        panel.add(new JLabel("Low Stock Threshold:"));
+        panel.add(thresholdField);
+
+        int result = JOptionPane.showConfirmDialog(this, panel, "Add New Product", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+
+        if (result == JOptionPane.OK_OPTION) {
+            try {
+                String sku = skuField.getText().trim();
+                String name = nameField.getText().trim();
+                String desc = descField.getText().trim();
+                String categoryStr = (String) categoryCombo.getSelectedItem();
+                int categoryId = Integer.parseInt(categoryStr.substring(categoryStr.indexOf("ID: ") + 4, categoryStr.indexOf(")")));
+                BigDecimal price = new BigDecimal(priceField.getText().trim());
+                int stock = Integer.parseInt(stockField.getText().trim());
+                int threshold = Integer.parseInt(thresholdField.getText().trim());
+
+                if (sku.isEmpty() || name.isEmpty() || price.compareTo(BigDecimal.ZERO) <= 0 || categoryId <= 0) {
+                    JOptionPane.showMessageDialog(this, "Please fill all required fields with valid values.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+
+                Product product = new Product();
+                product.setSku(sku);
+                product.setName(name);
+                product.setDescription(desc);
+                product.setCategoryId(categoryId);
+                product.setPrice(price);
+                product.setStockQty(stock);
+                product.setLowStockThreshold(threshold);
+
+                if (catalogService.addProduct(product)) {
+                    refreshInventoryTable();
+                    loadRealDatabaseMetrics(); // refresh product count
+                    JOptionPane.showMessageDialog(this, "Product '" + name + "' added successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                } else {
+                    JOptionPane.showMessageDialog(this, "Failed to add product. SKU may already exist.", "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Invalid number format for price, stock, or threshold.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                JOptionPane.showMessageDialog(this, "Error: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
         }
     }
 
     private void showCategoriesModal() {
-        String msg = "NEXUS Luxury Categories:\n\n" +
-            "1. TIMEPIECES (Swiss Automatics & Tourbillons)\n" +
-            "2. APPAREL (Milanese Silks & Tailored Velvets)\n" +
-            "3. JEWELRY (Ethical Pavé Diamonds & Gemstones)\n" +
-            "4. TECH (Aerospace Titanium Smart Wearables)\n\n" +
-            "Active status: 4/4 Available in Customer Store";
-        JOptionPane.showMessageDialog(this, msg, "Category Management", JOptionPane.INFORMATION_MESSAGE);
+        List<Category> categories = catalogService.getCategories();
+
+        // Build table for categories
+        String[] columns = {"ID", "Name", "Description"};
+        DefaultTableModel model = new DefaultTableModel(columns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int col) { return false; }
+        };
+
+        for (Category c : categories) {
+            model.addRow(new Object[]{c.getId(), c.getName(), c.getDescription()});
+        }
+
+        JTable table = new JTable(model);
+        table.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        table.setRowHeight(28);
+        table.setForeground(TEXT_WHITE);
+        table.setBackground(new Color(24, 28, 62));
+        table.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 12));
+        table.getTableHeader().setBackground(new Color(15, 18, 42));
+        table.getTableHeader().setForeground(ACCENT_CYAN);
+
+        JScrollPane scrollPane = new JScrollPane(table);
+        scrollPane.setPreferredSize(new Dimension(500, 300));
+
+        // Buttons panel
+        JPanel buttonPanel = new JPanel();
+        buttonPanel.setOpaque(false);
+
+        JButton addBtn = createActionButton("+ Add Category", ACCENT_CYAN);
+        addBtn.addActionListener(e -> {
+            String name = JOptionPane.showInputDialog(this, "Enter Category Name:", "Add Category", JOptionPane.QUESTION_MESSAGE);
+            if (name != null && !name.trim().isEmpty()) {
+                String desc = JOptionPane.showInputDialog(this, "Enter Description (optional):", "Add Category", JOptionPane.QUESTION_MESSAGE);
+                Category cat = new Category();
+                cat.setName(name.trim());
+                cat.setDescription(desc != null ? desc.trim() : "");
+                if (catalogService.getCategories().stream().anyMatch(c -> c.getName().equalsIgnoreCase(name.trim()))) {
+                    JOptionPane.showMessageDialog(this, "Category already exists.", "Error", JOptionPane.ERROR_MESSAGE);
+                } else if (new com.ecommerce.dao.CategoryDAO().addCategory(cat)) {
+                    JOptionPane.showMessageDialog(this, "Category added successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                    showCategoriesModal(); // Refresh
+                } else {
+                    JOptionPane.showMessageDialog(this, "Failed to add category.", "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        });
+        buttonPanel.add(addBtn);
+
+        JButton editBtn = createActionButton("✏ Edit Selected", ACCENT_AMBER);
+        editBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                int catId = (Integer) model.getValueAt(row, 0);
+                String currentName = (String) model.getValueAt(row, 1);
+                String currentDesc = (String) model.getValueAt(row, 2);
+
+                String newName = JOptionPane.showInputDialog(this, "Edit Category Name:", currentName);
+                if (newName != null && !newName.trim().isEmpty()) {
+                    String newDesc = JOptionPane.showInputDialog(this, "Edit Description:", currentDesc);
+                    Category cat = new Category();
+                    cat.setId(catId);
+                    cat.setName(newName.trim());
+                    cat.setDescription(newDesc != null ? newDesc.trim() : "");
+                    if (new com.ecommerce.dao.CategoryDAO().updateCategory(cat)) {
+                        JOptionPane.showMessageDialog(this, "Category updated!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                        showCategoriesModal(); // Refresh
+                    } else {
+                        JOptionPane.showMessageDialog(this, "Failed to update category.", "Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            } else {
+                JOptionPane.showMessageDialog(this, "Please select a category to edit.", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        buttonPanel.add(editBtn);
+
+        JButton deleteBtn = createActionButton("🗑 Delete Selected", ACCENT_ROSE);
+        deleteBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                int catId = (Integer) model.getValueAt(row, 0);
+                String catName = (String) model.getValueAt(row, 1);
+                int confirm = JOptionPane.showConfirmDialog(this,
+                    "Delete category '" + catName + "'?\nThis will fail if products use this category.",
+                    "Confirm Delete", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+                if (confirm == JOptionPane.YES_OPTION) {
+                    if (new com.ecommerce.dao.CategoryDAO().deleteCategory(catId)) {
+                        JOptionPane.showMessageDialog(this, "Category deleted!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                        showCategoriesModal(); // Refresh
+                    } else {
+                        JOptionPane.showMessageDialog(this, "Cannot delete category (may have products).", "Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            } else {
+                JOptionPane.showMessageDialog(this, "Please select a category to delete.", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        buttonPanel.add(deleteBtn);
+
+        JPanel contentPanel = new JPanel(new BorderLayout(10, 10));
+        contentPanel.setOpaque(false);
+        contentPanel.add(scrollPane, BorderLayout.CENTER);
+        contentPanel.add(buttonPanel, BorderLayout.SOUTH);
+
+        JOptionPane.showMessageDialog(this, contentPanel, "Category Management", JOptionPane.PLAIN_MESSAGE);
     }
 
     private void showOrdersModal() {
